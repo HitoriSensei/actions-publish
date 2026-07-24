@@ -1,0 +1,42 @@
+name: 'Publish static site'
+description: >
+  Uploads a built static site directory to the internal publish-server,
+  keyed only by a logical site name. No infrastructure paths or hostnames
+  are ever visible to the calling workflow.
+
+inputs:
+  target:
+    description: 'Logical site name - this is also its subdomain, e.g. "gravity-snake-editor"'
+    required: true
+  path:
+    description: 'Directory containing the built site to publish'
+    required: false
+    default: 'dist'
+  token:
+    description: 'Publish-server bearer token - pass secrets.PUBLISH_TOKEN'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+
+        target="${{ inputs.target }}"
+        src="${{ inputs.path }}"
+        archive="/tmp/site-${target}.tar.gz"
+
+        if [ ! -d "$src" ]; then
+          echo "::error::path '$src' does not exist or is not a directory"
+          exit 1
+        fi
+
+        tar czf "$archive" -C "$src" .
+
+        curl -fsS -X POST \
+          -H "Authorization: Bearer ${{ inputs.token }}" \
+          --data-binary @"$archive" \
+          "http://publish-server:8080/publish/${target}"
+
+        rm -f "$archive"
