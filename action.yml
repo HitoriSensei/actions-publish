@@ -55,7 +55,7 @@ runs:
         archive="/tmp/site-${PUBLISH_TARGET}.tar.gz"
         tar czf "$archive" -C "$PUBLISH_PATH" .
 
-        args=(-fsS -X POST -H "Authorization: Bearer ${PUBLISH_TOKEN}")
+        args=(-s -X POST -H "Authorization: Bearer ${PUBLISH_TOKEN}")
 
         if [ "$PUBLISH_BASIC_AUTH" = "true" ]; then
           args+=(-H "X-Basic-Auth: enabled")
@@ -69,6 +69,20 @@ runs:
           fi
         fi
 
-        curl "${args[@]}" --data-binary @"$archive" "http://publish-server:8080/publish/${PUBLISH_TARGET}"
+        response_file="$(mktemp)"
+        http_code="$(curl "${args[@]}" -o "$response_file" -w '%{http_code}' \
+          --data-binary @"$archive" "http://publish-server:8080/publish/${PUBLISH_TARGET}")"
 
-        rm -f "$archive"
+        # curl -fsS would swallow the response body on a non-2xx status,
+        # which is exactly the message you need to see to debug a rejected
+        # publish (bad auth config, invalid target, etc). Check manually
+        # instead so that message always makes it into the job log.
+        if [ "$http_code" -ge 400 ]; then
+          echo "::error::publish-server rejected the request (HTTP ${http_code}):"
+          cat "$response_file"
+          rm -f "$archive" "$response_file"
+          exit 1
+        fi
+
+        cat "$response_file"
+        rm -f "$archive" "$response_file"
