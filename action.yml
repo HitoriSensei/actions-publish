@@ -15,28 +15,60 @@ inputs:
   token:
     description: 'Publish-server bearer token - pass secrets.PUBLISH_TOKEN'
     required: true
+  basic_auth:
+    description: 'Enable HTTP Basic Auth for this site ("true"/"false")'
+    required: false
+    default: 'false'
+  basic_auth_users:
+    description: >
+      Optional newline-separated list of "username:apr1-hash" pairs, already
+      hashed (e.g. via `openssl passwd -apr1` or `htpasswd -nbm`) - never
+      pass a plaintext password here. If basic_auth is enabled but this is
+      left empty, the publish server falls back to its own configured
+      default credentials.
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
   steps:
     - shell: bash
+      # Values come in via env: rather than being interpolated directly into
+      # the script text below. Basic-auth hashes and tokens routinely
+      # contain "$" - substituting them straight into a run: block would let
+      # bash try to expand pieces of them as if they were shell variables.
+      # Going through env: and reading with "$NAME" avoids that entirely.
+      env:
+        PUBLISH_TARGET: ${{ inputs.target }}
+        PUBLISH_PATH: ${{ inputs.path }}
+        PUBLISH_TOKEN: ${{ inputs.token }}
+        PUBLISH_BASIC_AUTH: ${{ inputs.basic_auth }}
+        PUBLISH_BASIC_AUTH_USERS: ${{ inputs.basic_auth_users }}
       run: |
         set -euo pipefail
 
-        target="${{ inputs.target }}"
-        src="${{ inputs.path }}"
-        archive="/tmp/site-${target}.tar.gz"
-
-        if [ ! -d "$src" ]; then
-          echo "::error::path '$src' does not exist or is not a directory"
+        if [ ! -d "$PUBLISH_PATH" ]; then
+          echo "::error::path '$PUBLISH_PATH' does not exist or is not a directory"
           exit 1
         fi
 
-        tar czf "$archive" -C "$src" .
+        archive="/tmp/site-${PUBLISH_TARGET}.tar.gz"
+        tar czf "$archive" -C "$PUBLISH_PATH" .
 
-        curl -fsS -X POST \
-          -H "Authorization: Bearer ${{ inputs.token }}" \
-          --data-binary @"$archive" \
-          "http://publish-server:8080/publish/${target}"
+        args=(-fsS -X POST -H "Authorization: Bearer ${PUBLISH_TOKEN}")
+
+        if [ "$PUBLISH_BASIC_AUTH" = "true" ]; then
+          args+=(-H "X-Basic-Auth: enabled")
+          if [ -n "$PUBLISH_BASIC_AUTH_USERS" ]; then
+            # Collapse the newline-separated input into one comma-delimited
+            # header value - the server expects it this way (HTTP servers
+            # are allowed to merge repeated same-name headers, which would
+            # otherwise scramble a multi-user list).
+            joined="$(printf '%s' "$PUBLISH_BASIC_AUTH_USERS" | grep -v '^[[:space:]]*$' | paste -sd, -)"
+            args+=(-H "X-Basic-Auth-User: ${joined}")
+          fi
+        fi
+
+        curl "${args[@]}" --data-binary @"$archive" "http://publish-server:8080/publish/${PUBLISH_TARGET}"
 
         rm -f "$archive"
