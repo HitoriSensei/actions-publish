@@ -12,6 +12,10 @@ inputs:
     description: 'Directory containing the built site to publish'
     required: false
     default: 'dist'
+  publish_server:
+    description: 'Publishing server that handles the publish action'
+    required: true
+    default: ${{ vars.PUBLISH_SERVER }}
   token:
     description: 'Publish-server bearer token - pass secrets.PUBLISH_TOKEN'
     required: true
@@ -44,6 +48,7 @@ runs:
         PUBLISH_TOKEN: ${{ inputs.token }}
         PUBLISH_BASIC_AUTH: ${{ inputs.basic_auth }}
         PUBLISH_BASIC_AUTH_USERS: ${{ inputs.basic_auth_users }}
+        PUBLISH_SERVER: ${{ inputs.publish_server }}
       run: |
         set -euo pipefail
 
@@ -71,7 +76,7 @@ runs:
 
         response_file="$(mktemp)"
         http_code="$(curl "${args[@]}" -o "$response_file" -w '%{http_code}' \
-          --data-binary @"$archive" "http://publish-server:8080/publish/${PUBLISH_TARGET}")"
+          --data-binary @"$archive" "$PUBLISH_SERVER/publish/${PUBLISH_TARGET}")"
 
         # curl -fsS would swallow the response body on a non-2xx status,
         # which is exactly the message you need to see to debug a rejected
